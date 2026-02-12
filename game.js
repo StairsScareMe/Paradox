@@ -1,6 +1,18 @@
 const TILE = 64;
 const TICK_MS = 190;
 
+const SPRITE_CONFIG = {
+  player: 'assets/models/player.png',
+  ghost: 'assets/models/ghost.png',
+  box: 'assets/models/box.png',
+  wall: 'assets/models/wall.png',
+  buttonOn: 'assets/models/button_on.png',
+  buttonOff: 'assets/models/button_off.png',
+  doorOpen: 'assets/models/door_open.png',
+  doorClosed: 'assets/models/door_closed.png',
+  goal: 'assets/models/goal.png'
+};
+
 const LEVELS = [
   {
     name: 'Level 1 — Basic Cooperation',
@@ -40,8 +52,8 @@ const LEVELS = [
   },
   {
     name: 'Level 6 — Paradox Protocol',
-    objective: 'Reach the exit without crossing your own timeline.',
-    hint: 'If you block your past self, reality glitches and the loop collapses.',
+    objective: 'Reach the exit without blocking your own timeline.',
+    hint: 'If you stand in your past self\'s route, reality glitches and the loop collapses.',
     width: 10,
     height: 8,
     walls: [
@@ -81,6 +93,19 @@ let state = null;
 let queuedMove = null;
 let queuedInteract = false;
 let gameInterval = null;
+const sprites = {};
+
+function loadSprite(name, path) {
+  const image = new Image();
+  image.src = path;
+  image.addEventListener('load', () => {
+    sprites[name] = image;
+  });
+}
+
+function loadSprites() {
+  Object.entries(SPRITE_CONFIG).forEach(([name, path]) => loadSprite(name, path));
+}
 
 function initLevel(index) {
   const base = LEVELS[index];
@@ -98,6 +123,15 @@ function initLevel(index) {
     doorOpen: false,
     finished: false
   };
+  syncHud();
+}
+
+function resetLevel(keepLoops = true) {
+  const current = state.levelIndex;
+  const loops = keepLoops ? state.loops : 0;
+  initLevel(current);
+  state.loops = loops;
+  state.status = 'Level reset.';
   syncHud();
 }
 
@@ -185,7 +219,8 @@ function rewind() {
 
   state.ghosts.push({
     path: state.recording.map((frame) => ({ ...frame })),
-    pos: { x: state.level.start[0], y: state.level.start[1] }
+    pos: { x: state.level.start[0], y: state.level.start[1] },
+    previousPos: { x: state.level.start[0], y: state.level.start[1] }
   });
 
   state.loops += 1;
@@ -203,12 +238,12 @@ function triggerParadox() {
   state.glitchedUntil = performance.now() + 1200;
   syncHud();
 
-  const idx = state.levelIndex;
-  setTimeout(() => initLevel(idx), 380);
+  setTimeout(() => resetLevel(false), 380);
 }
 
 function advanceGhosts() {
   for (const ghost of state.ghosts) {
+    ghost.previousPos = { ...ghost.pos };
     const frame = ghost.path[state.tick];
     if (!frame) continue;
     ghost.pos.x = frame.x;
@@ -217,14 +252,25 @@ function advanceGhosts() {
 }
 
 function detectParadox() {
-  return state.ghosts.some((ghost) => ghost.pos.x === state.player.x && ghost.pos.y === state.player.y);
+  if (state.tick === 0) return false;
+  return state.ghosts.some((ghost) => {
+    const steppedIntoPlayer = ghost.pos.x === state.player.x
+      && ghost.pos.y === state.player.y
+      && (ghost.previousPos.x !== ghost.pos.x || ghost.previousPos.y !== ghost.pos.y);
+
+    const playerSteppedIntoGhost = queuedMove
+      && ghost.pos.x === state.player.x
+      && ghost.pos.y === state.player.y;
+
+    return steppedIntoPlayer || playerSteppedIntoGhost;
+  });
 }
 
 function tryFinishLevel() {
   const [gx, gy] = state.level.goal;
   if (state.player.x === gx && state.player.y === gy) {
     state.finished = true;
-    state.status = state.levelIndex === LEVELS.length - 1 ? 'You escaped the paradox!' : 'Level complete! Press N for next level.';
+    state.status = state.levelIndex === LEVELS.length - 1 ? 'You escaped the paradox!' : 'Level complete! Press M for next level.';
     syncHud();
   }
 }
@@ -268,6 +314,18 @@ function step() {
   }
 }
 
+function drawSprite(name, x, y, inset = 0, alpha = 1) {
+  const sprite = sprites[name];
+  const px = x * TILE + inset;
+  const py = y * TILE + inset;
+  const size = TILE - (inset * 2);
+  if (!sprite) return false;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(sprite, px, py, size, size);
+  ctx.globalAlpha = 1;
+  return true;
+}
+
 function draw() {
   if (!state) return;
 
@@ -290,40 +348,61 @@ function draw() {
   }
 
   for (const [x, y] of state.level.walls) {
-    ctx.fillStyle = '#3a4664';
-    ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
+    const usedSprite = drawSprite('wall', x, y, 0);
+    if (!usedSprite) {
+      ctx.fillStyle = '#3a4664';
+      ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
+    }
   }
 
   for (const [x, y] of state.level.buttons) {
     const down = buttonPressedMap().has(key(x, y));
-    ctx.fillStyle = down ? '#89ff9a' : '#f7d45c';
-    ctx.fillRect(x * TILE + 16, y * TILE + 16, TILE - 32, TILE - 32);
+    const usedSprite = drawSprite(down ? 'buttonOn' : 'buttonOff', x, y, 16);
+    if (!usedSprite) {
+      ctx.fillStyle = down ? '#89ff9a' : '#f7d45c';
+      ctx.fillRect(x * TILE + 16, y * TILE + 16, TILE - 32, TILE - 32);
+    }
   }
 
   const [doorX, doorY] = state.level.door;
-  ctx.fillStyle = state.doorOpen ? '#304860' : '#af4f63';
-  ctx.fillRect(doorX * TILE + 8, doorY * TILE + 8, TILE - 16, TILE - 16);
+  const usedDoorSprite = drawSprite(state.doorOpen ? 'doorOpen' : 'doorClosed', doorX, doorY, 8);
+  if (!usedDoorSprite) {
+    ctx.fillStyle = state.doorOpen ? '#304860' : '#af4f63';
+    ctx.fillRect(doorX * TILE + 8, doorY * TILE + 8, TILE - 16, TILE - 16);
+  }
 
   const [goalX, goalY] = state.level.goal;
-  ctx.fillStyle = '#68d7ff';
-  ctx.beginPath();
-  ctx.arc(goalX * TILE + TILE / 2, goalY * TILE + TILE / 2, 14, 0, Math.PI * 2);
-  ctx.fill();
+  const usedGoalSprite = drawSprite('goal', goalX, goalY, 12);
+  if (!usedGoalSprite) {
+    ctx.fillStyle = '#68d7ff';
+    ctx.beginPath();
+    ctx.arc(goalX * TILE + TILE / 2, goalY * TILE + TILE / 2, 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   for (const box of state.boxes) {
-    ctx.fillStyle = '#b58f66';
-    ctx.fillRect(box.x * TILE + 12, box.y * TILE + 12, TILE - 24, TILE - 24);
+    const usedBoxSprite = drawSprite('box', box.x, box.y, 12);
+    if (!usedBoxSprite) {
+      ctx.fillStyle = '#b58f66';
+      ctx.fillRect(box.x * TILE + 12, box.y * TILE + 12, TILE - 24, TILE - 24);
+    }
   }
 
   for (const ghost of state.ghosts) {
-    ctx.fillStyle = glitch ? '#ff6e7f' : '#88a8ff';
-    ctx.globalAlpha = 0.55;
-    ctx.fillRect(ghost.pos.x * TILE + 12, ghost.pos.y * TILE + 12, TILE - 24, TILE - 24);
-    ctx.globalAlpha = 1;
+    const usedGhostSprite = drawSprite('ghost', ghost.pos.x, ghost.pos.y, 12, 0.55);
+    if (!usedGhostSprite) {
+      ctx.fillStyle = glitch ? '#ff6e7f' : '#88a8ff';
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(ghost.pos.x * TILE + 12, ghost.pos.y * TILE + 12, TILE - 24, TILE - 24);
+      ctx.globalAlpha = 1;
+    }
   }
 
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(state.player.x * TILE + 12, state.player.y * TILE + 12, TILE - 24, TILE - 24);
+  const usedPlayerSprite = drawSprite('player', state.player.x, state.player.y, 12);
+  if (!usedPlayerSprite) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(state.player.x * TILE + 12, state.player.y * TILE + 12, TILE - 24, TILE - 24);
+  }
 
   if (glitch) {
     ctx.fillStyle = 'rgba(255, 110, 127, 0.18)';
@@ -348,11 +427,16 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (event.key.toLowerCase() === 'n') {
+    resetLevel();
+  }
+
+  if (event.key.toLowerCase() === 'm') {
     const next = (state.levelIndex + 1) % LEVELS.length;
     initLevel(next);
   }
 });
 
+loadSprites();
 initLevel(0);
 gameInterval = setInterval(step, TICK_MS);
 requestAnimationFrame(draw);
