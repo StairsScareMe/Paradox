@@ -185,11 +185,16 @@ function key(x, y) { return `${x},${y}`; }
 function onGrid(x, y) { return x >= 0 && y >= 0 && x < state.level.width && y < state.level.height; }
 function isWall(x, y) { return state.level.walls.some(([wx, wy]) => wx === x && wy === y); }
 function isBox(x, y) { return state.boxes.find((b) => b.x === x && b.y === y); }
+function isGoal(x, y) {
+  const [gx, gy] = state.level.goal;
+  return x === gx && y === gy;
+}
 
 function walkable(x, y) {
   if (!onGrid(x, y) || isWall(x, y)) return false;
   const [dx, dy] = state.level.door;
   if (!state.doorOpen && x === dx && y === dy) return false;
+  if (!state.doorOpen && isGoal(x, y)) return false;
   return true;
 }
 
@@ -210,7 +215,13 @@ function updateDoorState() {
 function attemptMove(entity, dx, dy) {
   const nx = entity.x + dx;
   const ny = entity.y + dy;
-  if (!walkable(nx, ny)) return false;
+  if (!walkable(nx, ny)) {
+    if (entity === state.player && isGoal(nx, ny) && !state.doorOpen) {
+      state.status = 'Goal is sealed. Unlock the door first.';
+      syncHud();
+    }
+    return false;
+  }
   if (entity === state.player) {
     const box = isBox(nx, ny);
     if (box) {
