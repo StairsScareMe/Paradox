@@ -6,16 +6,18 @@ A lightweight puzzle prototype based on the core concept:
 
 ## Gameplay
 
-- **Move:** `WASD` / arrow keys
+- **Move:** `WASD` / arrow keys (smooth movement, not tile-step)
 - **Interact:** `E`
 - **Rewind:** `R`
 - **Reset current level:** `N`
-- **Next level:** `M`
+- **Next level:** `M` (only after finishing current level)
 
 ## Important behavior update
 
 - You **cannot die** anymore. Crossing your ghost only triggers a short timeline warning effect.
 - Resetting the level (`N`) never kills the player and never changes to a different level.
+- The **goal tile is blocked until the door is unlocked**, so you can’t finish by bypassing door logic.
+- Each level requires at least one rewind/copy before completion.
 
 ## Custom photos / models
 

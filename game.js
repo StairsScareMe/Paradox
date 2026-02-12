@@ -1,5 +1,7 @@
 const TILE = 64;
-const TICK_MS = 190;
+const TICK_MS = 16;
+const MOVE_SPEED = 0.14;
+const PLAYER_RADIUS = 0.28;
 const STORAGE_PREFIX = 'paradoxSprite:';
 
 const SPRITE_CONFIG = {
@@ -43,17 +45,17 @@ const LEVELS = [
   },
   {
     name: 'Level 2 — Timing Puzzle',
-    objective: 'Get the box onto the pressure plate while your past self holds the door.',
-    hint: 'Past-you stands on the button. Present-you pushes the box through the open door.',
+    objective: 'Hold both pressure plates with your past and present selves.',
+    hint: 'Record yourself on one plate, rewind, then stand on the other plate.',
     requiredLoops: 1,
     width: 10,
     height: 8,
     walls: [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[0,1],[9,1],[0,2],[9,2],[0,3],[9,3],[0,4],[9,4],[0,5],[9,5],[0,6],[9,6],[0,7],[1,7],[2,7],[3,7],[4,7],[5,7],[6,7],[7,7],[8,7],[9,7],[3,1],[3,2],[3,3],[3,4],[6,3],[7,3]],
-    buttons: [[2, 1]],
+    buttons: [[2, 1], [7, 5]],
     door: [5, 3],
     start: [2, 5],
     goal: [7, 5],
-    boxes: [[4, 5]]
+    boxes: []
   },
   {
     name: 'Level 3 — Paradox Protocol',
@@ -87,7 +89,7 @@ const dirs = {
 };
 
 let state = null;
-let queuedMove = null;
+const keysDown = new Set();
 let queuedInteract = false;
 const sprites = {};
 
@@ -149,7 +151,7 @@ function initLevel(index) {
   state = {
     levelIndex: index,
     level: structuredClone(base),
-    player: { x: base.start[0], y: base.start[1] },
+    player: { x: base.start[0] + 0.5, y: base.start[1] + 0.5 },
     boxes: base.boxes.map(([x, y]) => ({ x, y })),
     ghosts: [],
     recording: [],
@@ -190,11 +192,25 @@ function isGoal(x, y) {
   return x === gx && y === gy;
 }
 
-function walkable(x, y) {
-  if (!onGrid(x, y) || isWall(x, y)) return false;
+function solidTile(tx, ty) {
   const [dx, dy] = state.level.door;
-  if (!state.doorOpen && x === dx && y === dy) return false;
-  if (!state.doorOpen && isGoal(x, y)) return false;
+  if (isWall(tx, ty)) return true;
+  if (!state.doorOpen && tx === dx && ty === dy) return true;
+  if (!state.doorOpen && isGoal(tx, ty)) return true;
+  return false;
+}
+
+function walkable(x, y) {
+  if (!onGrid(x, y)) return false;
+  const minX = Math.floor(x - PLAYER_RADIUS);
+  const maxX = Math.floor(x + PLAYER_RADIUS);
+  const minY = Math.floor(y - PLAYER_RADIUS);
+  const maxY = Math.floor(y + PLAYER_RADIUS);
+  for (let ty = minY; ty <= maxY; ty += 1) {
+    for (let tx = minX; tx <= maxX; tx += 1) {
+      if (solidTile(tx, ty)) return false;
+    }
+  }
   return true;
 }
 
@@ -222,16 +238,6 @@ function attemptMove(entity, dx, dy) {
     }
     return false;
   }
-  if (entity === state.player) {
-    const box = isBox(nx, ny);
-    if (box) {
-      const px = box.x + dx;
-      const py = box.y + dy;
-      if (!walkable(px, py) || isBox(px, py)) return false;
-      box.x = px;
-      box.y = py;
-    }
-  }
   entity.x = nx;
   entity.y = ny;
   return true;
@@ -245,26 +251,25 @@ function rewind() {
   }
   state.ghosts.push({
     path: state.recording.map((f) => ({ ...f })),
-    pos: { x: state.level.start[0], y: state.level.start[1] }
+    pos: { x: state.level.start[0] + 0.5, y: state.level.start[1] + 0.5 }
   });
   state.loops += 1;
-  state.player = { x: state.level.start[0], y: state.level.start[1] };
+  state.player = { x: state.level.start[0] + 0.5, y: state.level.start[1] + 0.5 };
   state.recording = [];
   state.tick = 0;
   state.status = 'Loop created. Work with your past self.';
-  queuedMove = null;
   queuedInteract = false;
   syncHud();
 }
 
 function paradoxWarningTriggered() {
   if (state.tick === 0) return false;
-  return state.ghosts.some((ghost) => ghost.pos.x === state.player.x && ghost.pos.y === state.player.y);
+  return state.ghosts.some((ghost) => Math.hypot(ghost.pos.x - state.player.x, ghost.pos.y - state.player.y) < 0.25);
 }
 
 function tryFinishLevel() {
   const [gx, gy] = state.level.goal;
-  if (state.player.x === gx && state.player.y === gy) {
+  if (Math.floor(state.player.x) === gx && Math.floor(state.player.y) === gy) {
     if (state.loops < state.level.requiredLoops) {
       state.status = `Create at least ${state.level.requiredLoops} copy before exiting.`;
       syncHud();
@@ -294,7 +299,16 @@ function step() {
   }
 
   updateDoorState();
-  if (queuedMove) attemptMove(state.player, queuedMove[0], queuedMove[1]);
+  let mx = 0;
+  let my = 0;
+  if (keysDown.has('ArrowUp') || keysDown.has('w')) my -= 1;
+  if (keysDown.has('ArrowDown') || keysDown.has('s')) my += 1;
+  if (keysDown.has('ArrowLeft') || keysDown.has('a')) mx -= 1;
+  if (keysDown.has('ArrowRight') || keysDown.has('d')) mx += 1;
+  if (mx !== 0 || my !== 0) {
+    const len = Math.hypot(mx, my);
+    attemptMove(state.player, (mx / len) * MOVE_SPEED, (my / len) * MOVE_SPEED);
+  }
 
   if (queuedInteract) {
     state.status = state.doorOpen ? 'Interaction successful: timeline aligned.' : 'Interaction failed: no active target.';
@@ -316,7 +330,6 @@ function step() {
     action: queuedInteract ? 'interact' : null
   });
 
-  queuedMove = null;
   queuedInteract = false;
   state.tick += 1;
 
@@ -390,17 +403,17 @@ function draw() {
   }
 
   for (const ghost of state.ghosts) {
-    if (!drawSprite('ghost', ghost.pos.x, ghost.pos.y, 12, 0.55)) {
+    if (!drawSprite('ghost', ghost.pos.x - 0.5, ghost.pos.y - 0.5, 12, 0.55)) {
       ctx.fillStyle = '#88a8ff';
       ctx.globalAlpha = 0.55;
-      ctx.fillRect(ghost.pos.x * TILE + 12, ghost.pos.y * TILE + 12, TILE - 24, TILE - 24);
+      ctx.fillRect((ghost.pos.x - 0.5) * TILE + 12, (ghost.pos.y - 0.5) * TILE + 12, TILE - 24, TILE - 24);
       ctx.globalAlpha = 1;
     }
   }
 
-  if (!drawSprite('player', state.player.x, state.player.y, 12)) {
+  if (!drawSprite('player', state.player.x - 0.5, state.player.y - 0.5, 12)) {
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(state.player.x * TILE + 12, state.player.y * TILE + 12, TILE - 24, TILE - 24);
+    ctx.fillRect((state.player.x - 0.5) * TILE + 12, (state.player.y - 0.5) * TILE + 12, TILE - 24, TILE - 24);
   }
 
   if (glitch) {
@@ -413,7 +426,7 @@ function draw() {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (event.key in dirs) queuedMove = dirs[event.key];
+  if (event.key in dirs) keysDown.add(event.key);
   if (event.key.toLowerCase() === 'e') queuedInteract = true;
   if (event.key.toLowerCase() === 'r') rewind();
   if (event.key.toLowerCase() === 'n') resetLevel();
@@ -425,6 +438,9 @@ window.addEventListener('keydown', (event) => {
     }
     initLevel((state.levelIndex + 1) % LEVELS.length);
   }
+});
+window.addEventListener('keyup', (event) => {
+  if (event.key in dirs) keysDown.delete(event.key);
 });
 
 loadSprites();
