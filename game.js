@@ -31,6 +31,7 @@ const LEVELS = [
     name: 'Level 1 — Basic Cooperation',
     objective: 'Press both buttons at the same time to open the door.',
     hint: 'Stand on one button, press R, then run to the other button.',
+    requiredLoops: 1,
     width: 10,
     height: 8,
     walls: [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[0,1],[9,1],[0,2],[9,2],[0,3],[9,3],[0,4],[9,4],[0,5],[9,5],[0,6],[9,6],[0,7],[1,7],[2,7],[3,7],[4,7],[5,7],[6,7],[7,7],[8,7],[9,7],[4,1],[4,2],[4,3],[4,4]],
@@ -41,9 +42,10 @@ const LEVELS = [
     boxes: []
   },
   {
-    name: 'Level 3 — Timing Puzzle',
+    name: 'Level 2 — Timing Puzzle',
     objective: 'Get the box onto the pressure plate while your past self holds the door.',
     hint: 'Past-you stands on the button. Present-you pushes the box through the open door.',
+    requiredLoops: 1,
     width: 10,
     height: 8,
     walls: [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[0,1],[9,1],[0,2],[9,2],[0,3],[9,3],[0,4],[9,4],[0,5],[9,5],[0,6],[9,6],[0,7],[1,7],[2,7],[3,7],[4,7],[5,7],[6,7],[7,7],[8,7],[9,7],[3,1],[3,2],[3,3],[3,4],[6,3],[7,3]],
@@ -54,9 +56,10 @@ const LEVELS = [
     boxes: [[4, 5]]
   },
   {
-    name: 'Level 6 — Paradox Protocol',
+    name: 'Level 3 — Paradox Protocol',
     objective: 'Reach the exit without blocking your own timeline.',
     hint: 'Crossing your ghost now warns you, but never kills you.',
+    requiredLoops: 1,
     width: 10,
     height: 8,
     walls: [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[0,1],[9,1],[0,2],[9,2],[0,3],[9,3],[0,4],[9,4],[0,5],[9,5],[0,6],[9,6],[0,7],[1,7],[2,7],[3,7],[4,7],[5,7],[6,7],[7,7],[8,7],[9,7],[4,1],[5,1],[6,1],[6,2],[6,4],[6,5],[3,5],[4,5]],
@@ -251,6 +254,18 @@ function paradoxWarningTriggered() {
 function tryFinishLevel() {
   const [gx, gy] = state.level.goal;
   if (state.player.x === gx && state.player.y === gy) {
+    if (state.loops < state.level.requiredLoops) {
+      state.status = `Create at least ${state.level.requiredLoops} copy before exiting.`;
+      syncHud();
+      return;
+    }
+
+    if (!state.doorOpen) {
+      state.status = 'Exit is locked. Keep required buttons pressed.';
+      syncHud();
+      return;
+    }
+
     state.finished = true;
     state.status = state.levelIndex === LEVELS.length - 1 ? 'You escaped the paradox!' : 'Level complete! Press M for next level.';
     syncHud();
@@ -391,7 +406,14 @@ window.addEventListener('keydown', (event) => {
   if (event.key.toLowerCase() === 'e') queuedInteract = true;
   if (event.key.toLowerCase() === 'r') rewind();
   if (event.key.toLowerCase() === 'n') resetLevel();
-  if (event.key.toLowerCase() === 'm') initLevel((state.levelIndex + 1) % LEVELS.length);
+  if (event.key.toLowerCase() === 'm') {
+    if (!state.finished) {
+      state.status = 'Finish the current level before moving on.';
+      syncHud();
+      return;
+    }
+    initLevel((state.levelIndex + 1) % LEVELS.length);
+  }
 });
 
 loadSprites();
